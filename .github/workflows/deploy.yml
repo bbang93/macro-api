@@ -52,4 +52,13 @@ jobs:
             pip install -e ".[api]"
 
             # systemd 서비스 재시작
+            echo "🔄 Restarting macro-api service..."
             sudo systemctl restart macro-api
+
+            # 서비스 상태 확인
+            echo "✅ Service restart completed. Checking status..."
+            sudo systemctl status macro-api --no-pager
+
+            # 최근 로그 출력
+            echo "📋 Recent service logs:"
+            sudo journalctl -u macro-api -n 20 --no-pager
