@@ -27,10 +27,24 @@ jobs:
               git reset --hard origin/main
             fi
 
-            # Python 가상환경 생성 (처음만)
-            if [ ! -d "venv" ]; then
-              python3 -m venv venv
+            # Python 3.10 이상 찾기
+            PYTHON_CMD=""
+            for py in python3.12 python3.11 python3.10; do
+              if command -v $py &> /dev/null; then
+                PYTHON_CMD=$py
+                echo "Found $py"
+                break
+              fi
+            done
+
+            if [ -z "$PYTHON_CMD" ]; then
+              echo "Error: Python 3.10 or higher is required"
+              exit 1
             fi
+
+            # 기존 venv 삭제 후 새로 생성 (Python 버전 변경을 위해)
+            rm -rf venv
+            $PYTHON_CMD -m venv venv
 
             # 의존성 설치
             source venv/bin/activate
