@@ -530,7 +530,7 @@ class NetFunnelHelper:
         "Accept-Language": "en-US,en;q=0.9,ko-KR;q=0.8,ko;q=0.7",
     }
 
-    def __init__(self, debug=False):
+    def __init__(self, debug=False, on_wait_callback=None):
         if HAS_CURL_CFFI:
             self._session = curl_cffi.Session(impersonate="chrome")
         else:
@@ -540,6 +540,7 @@ class NetFunnelHelper:
         self._last_fetch_time = 0
         self._cache_ttl = 48  # 48 seconds
         self.debug = debug
+        self.on_wait_callback = on_wait_callback
 
     def run(self):
         current_time = time.time()
@@ -553,8 +554,15 @@ class NetFunnelHelper:
             # Keep checking until we get a pass status
             while status == self.WAIT_STATUS_FAIL:
                 print(f"\r현재 {nwait}명 대기중...", end="", flush=True)
+                # Call the callback with waiting status
+                if self.on_wait_callback:
+                    self.on_wait_callback(status="waiting", nwait=nwait)
                 time.sleep(1)
                 status, self._cached_key, nwait, ip = self._check(ip)
+
+            # Call the callback with passed status
+            if self.on_wait_callback:
+                self.on_wait_callback(status="passed", nwait=0)
 
             # Complete the funnel process
             status, *_ = self._complete(ip)
@@ -649,14 +657,15 @@ class SRT:
     """
 
     def __init__(
-        self, srt_id: str, srt_pw: str, auto_login: bool = True, verbose: bool = False
+        self, srt_id: str, srt_pw: str, auto_login: bool = True, verbose: bool = False,
+        on_netfunnel_wait_callback=None
     ) -> None:
         if HAS_CURL_CFFI:
             self._session = curl_cffi.Session(impersonate="chrome")
         else:
             self._session = requests.session()
         self._session.headers.update(DEFAULT_HEADERS)
-        self._netfunnel = NetFunnelHelper(debug=verbose)
+        self._netfunnel = NetFunnelHelper(debug=verbose, on_wait_callback=on_netfunnel_wait_callback)
         self.srt_id = srt_id
         self.srt_pw = srt_pw
         self.verbose = verbose

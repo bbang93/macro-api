@@ -95,6 +95,11 @@ class RailService:
         self._is_srt = rail_type == RailType.SRT
         self._last_trains: List[Any] = []  # Cache for reservation
 
+    def set_netfunnel_callback(self, callback):
+        """Set NetFunnel wait callback for SRT (KTX doesn't use NetFunnel)."""
+        if self._is_srt and hasattr(self.client, '_netfunnel'):
+            self.client._netfunnel.on_wait_callback = callback
+
     def _build_passenger_list(self, passengers: PassengerCount) -> List[Any]:
         """Convert PassengerCount to list of Passenger objects for rail API."""
         passenger_list = []

@@ -9,10 +9,17 @@ import logging
 
 from ..models.schemas import Job, JobCreateRequest, Reservation, PassengerCount
 from ..models.enums import JobStatus, SeatType
-from ..core.session import Session
+from ..core.session import Session, session_manager
 from ..core.websocket import connection_manager, EventTypes
 from ..core.exceptions import RailServiceError
 from .rail_service import RailService
+
+# Import srtgo exceptions for session expiry detection
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+from srtgo.srt import SRTLoginError
+from srtgo.ktx import NeedToLoginError
 
 logger = logging.getLogger(__name__)
 
@@ -170,6 +177,34 @@ class JobService:
         logger.info(f"Cancelled job {job_id[:8]}...")
         return True
 
+    async def _relogin_if_needed(self, session: Session) -> bool:
+        """
+        Attempt to relogin if session is expired.
+
+        Returns:
+            True if relogin was successful, False otherwise
+        """
+        try:
+            # Get stored credentials
+            user_id, password = session_manager.get_credentials(session)
+
+            # Attempt relogin
+            logger.info(f"Attempting auto-relogin for session {session.session_id[:8]}...")
+            rail_client, user_info = await RailService.login(
+                session.rail_type, user_id, password
+            )
+
+            # Update session with new client
+            session.rail_client = rail_client
+            session.user_info = user_info
+
+            logger.info(f"Auto-relogin successful for session {session.session_id[:8]}...")
+            return True
+
+        except Exception as e:
+            logger.error(f"Auto-relogin failed for session {session.session_id[:8]}...: {e}")
+            return False
+
     async def _run_booking_loop(self, job: JobData, session: Session) -> None:
         """
         Main booking loop that searches and attempts reservation.
@@ -195,19 +230,61 @@ class JobService:
 
         rail_service = RailService.create(session.rail_type, session.rail_client)
 
+        # Set NetFunnel callback to broadcast waiting status
+        def netfunnel_callback(status: str, nwait: int):
+            """Callback for NetFunnel waiting status."""
+            asyncio.create_task(
+                connection_manager.broadcast_to_session(
+                    session.session_id,
+                    EventTypes.NETFUNNEL_WAITING if status == "waiting" else EventTypes.NETFUNNEL_PASSED,
+                    job.id,
+                    {
+                        "status": status,
+                        "wait_count": nwait,
+                        "message": f"NetFunnel 대기중... ({nwait}명)" if status == "waiting" else "NetFunnel 통과"
+                    },
+                )
+            )
+
+        rail_service.set_netfunnel_callback(netfunnel_callback)
+
         try:
             while not job.cancelled:
                 job.attempt_count += 1
 
                 try:
-                    # Search for trains
-                    trains = await rail_service.search_trains(
-                        departure=job.departure,
-                        arrival=job.arrival,
-                        date=job.date,
-                        time=job.time,
-                        passengers=job.passengers,
-                    )
+                    # Search for trains (with auto-relogin on session expiry)
+                    try:
+                        trains = await rail_service.search_trains(
+                            departure=job.departure,
+                            arrival=job.arrival,
+                            date=job.date,
+                            time=job.time,
+                            passengers=job.passengers,
+                        )
+                    except (SRTLoginError, NeedToLoginError) as e:
+                        # Session expired, attempt auto-relogin
+                        logger.warning(f"Session expired for job {job.id[:8]}..., attempting relogin: {e}")
+
+                        if await self._relogin_if_needed(session):
+                            # Relogin successful, update rail_service and retry
+                            rail_service = RailService.create(session.rail_type, session.rail_client)
+                            rail_service.set_netfunnel_callback(netfunnel_callback)
+
+                            # Retry search
+                            trains = await rail_service.search_trains(
+                                departure=job.departure,
+                                arrival=job.arrival,
+                                date=job.date,
+                                time=job.time,
+                                passengers=job.passengers,
+                            )
+                        else:
+                            # Relogin failed
+                            raise RailServiceError(
+                                "SESSION_EXPIRED",
+                                "세션이 만료되어 재로그인에 실패했습니다.",
+                            )
 
                     # Check selected trains for availability
                     available_seats = []
@@ -302,21 +379,52 @@ class JobService:
                         )
 
                         try:
-                            if is_standby:
-                                # Attempt standby reservation
-                                reservation = await rail_service.reserve_standby(
-                                    train_index=idx,
-                                    passengers=job.passengers,
-                                    seat_type=job.seat_type,
-                                )
-                            else:
-                                # Regular reservation
-                                reservation = await rail_service.reserve(
-                                    train_index=idx,
-                                    passengers=job.passengers,
-                                    seat_type=job.seat_type,
-                                    prefer_window=job.prefer_window,
-                                )
+                            # Attempt reservation (with auto-relogin on session expiry)
+                            try:
+                                if is_standby:
+                                    # Attempt standby reservation
+                                    reservation = await rail_service.reserve_standby(
+                                        train_index=idx,
+                                        passengers=job.passengers,
+                                        seat_type=job.seat_type,
+                                    )
+                                else:
+                                    # Regular reservation
+                                    reservation = await rail_service.reserve(
+                                        train_index=idx,
+                                        passengers=job.passengers,
+                                        seat_type=job.seat_type,
+                                        prefer_window=job.prefer_window,
+                                    )
+                            except (SRTLoginError, NeedToLoginError) as e:
+                                # Session expired during reservation, attempt auto-relogin
+                                logger.warning(f"Session expired during reservation for job {job.id[:8]}...: {e}")
+
+                                if await self._relogin_if_needed(session):
+                                    # Relogin successful, update rail_service and retry reservation
+                                    rail_service = RailService.create(session.rail_type, session.rail_client)
+                                    rail_service.set_netfunnel_callback(netfunnel_callback)
+
+                                    # Retry reservation
+                                    if is_standby:
+                                        reservation = await rail_service.reserve_standby(
+                                            train_index=idx,
+                                            passengers=job.passengers,
+                                            seat_type=job.seat_type,
+                                        )
+                                    else:
+                                        reservation = await rail_service.reserve(
+                                            train_index=idx,
+                                            passengers=job.passengers,
+                                            seat_type=job.seat_type,
+                                            prefer_window=job.prefer_window,
+                                        )
+                                else:
+                                    # Relogin failed
+                                    raise RailServiceError(
+                                        "SESSION_EXPIRED",
+                                        "세션이 만료되어 재로그인에 실패했습니다.",
+                                    )
 
                             # Success!
                             job.status = JobStatus.SUCCESS

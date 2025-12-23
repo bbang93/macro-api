@@ -130,6 +130,8 @@ class EventTypes:
     SESSION_EXPIRED = "session_expired"
     ERROR = "error"
     PONG = "pong"
+    NETFUNNEL_WAITING = "netfunnel_waiting"
+    NETFUNNEL_PASSED = "netfunnel_passed"
 
 
 # Global connection manager instance

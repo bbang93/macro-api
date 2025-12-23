@@ -419,7 +419,7 @@ class NetFunnelHelper:
         "User-Agent": "Apache-HttpClient/UNAVAILABLE (java 1.4)",
     }
 
-    def __init__(self):
+    def __init__(self, on_wait_callback=None):
         if HAS_CURL_CFFI:
             self._session = curl_cffi.Session(impersonate="chrome131_android")
         else:
@@ -428,6 +428,7 @@ class NetFunnelHelper:
         self._cached_key = None
         self._last_fetch_time = 0
         self._cache_ttl = 50  # 50 seconds
+        self.on_wait_callback = on_wait_callback
 
     def run(self):
         current_time = time.time()
@@ -440,8 +441,15 @@ class NetFunnelHelper:
 
             while status == self.WAIT_STATUS_FAIL:
                 print(f"\r현재 {nwait}명 대기중...", end="", flush=True)
+                # Call the callback with waiting status
+                if self.on_wait_callback:
+                    self.on_wait_callback(status="waiting", nwait=nwait)
                 time.sleep(1)
                 status, self._cached_key, nwait = self._check()
+
+            # Call the callback with passed status
+            if self.on_wait_callback:
+                self.on_wait_callback(status="passed", nwait=0)
 
             # Try completing once
             status, _, _ = self._complete()
