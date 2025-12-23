@@ -1,0 +1,41 @@
+name: Deploy Macro API
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to server
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_KEY }}
+          script: |
+            # 프로젝트 디렉토리 생성 (처음만)
+            mkdir -p ~/projects/macro-api
+            cd ~/projects/macro-api
+
+            # Git 초기화 또는 업데이트
+            if [ ! -d ".git" ]; then
+              git clone git@github.com:bbang93/macro-api.git .
+            else
+              git fetch origin
+              git reset --hard origin/main
+            fi
+
+            # Python 가상환경 생성 (처음만)
+            if [ ! -d "venv" ]; then
+              python3 -m venv venv
+            fi
+
+            # 의존성 설치
+            source venv/bin/activate
+            pip install --upgrade pip
+            pip install -e ".[api]"
+
+            # systemd 서비스 재시작
+            sudo systemctl restart macro-api
