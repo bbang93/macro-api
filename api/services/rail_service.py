@@ -36,6 +36,7 @@ from srtgo.ktx import (
     Disability4To6Passenger,
     ToddlerPassenger,
     ReserveOption,
+    TrainType as KTXTrainType,
 )
 
 from ..models.enums import RailType, SeatType, PassengerType, TrainType
@@ -43,6 +44,20 @@ from ..models.schemas import PassengerCount
 from ..core.exceptions import RailServiceError, get_error_message
 
 logger = logging.getLogger(__name__)
+
+# Mapping from macro-api TrainType enum to ktx TrainType class values
+# 기존 srtgo 방식: train_type을 API 파라미터로 직접 전달
+TRAIN_TYPE_TO_KTX = {
+    TrainType.KTX: KTXTrainType.KTX,
+    TrainType.KTX_SANCHEON: KTXTrainType.KTX_SANCHEON,
+    TrainType.ITX_SAEMAEUL: KTXTrainType.ITX_SAEMAEUL,
+    TrainType.ITX_CHEONGCHUN: KTXTrainType.ITX_CHEONGCHUN,
+    TrainType.MUGUNGHWA: KTXTrainType.MUGUNGHWA,
+    TrainType.SAEMAEUL: KTXTrainType.SAEMAEUL,
+    TrainType.NURIRO: KTXTrainType.NURIRO,
+    TrainType.TONGGEUN: KTXTrainType.TONGGUEN,
+    TrainType.AIRPORT: KTXTrainType.AIRPORT,
+}
 
 # KTX station list (from srtgo.py)
 KTX_STATIONS = [
@@ -100,8 +115,28 @@ class RailService:
         if self._is_srt and hasattr(self.client, '_netfunnel'):
             self.client._netfunnel.on_wait_callback = callback
 
-    def _build_passenger_list(self, passengers: PassengerCount) -> List[Any]:
-        """Convert PassengerCount to list of Passenger objects for rail API."""
+    def _build_search_passenger_list(self, passengers: PassengerCount) -> List[Any]:
+        """
+        Build passenger list for SEARCH operations (srtgo 호환).
+
+        기존 srtgo 방식: 검색 시 모든 승객을 성인으로 통합하여 전달.
+        이렇게 하면 검색 결과가 더 안정적으로 반환됨.
+        """
+        total_count = passengers.total
+        if total_count <= 0:
+            total_count = 1
+
+        if self._is_srt:
+            return [SRTAdult(total_count)]
+        else:
+            return [AdultPassenger(total_count)]
+
+    def _build_reserve_passenger_list(self, passengers: PassengerCount) -> List[Any]:
+        """
+        Build passenger list for RESERVE operations (실제 구성 전달).
+
+        예약 시에는 실제 승객 구성을 전달하여 할인이 적용되도록 함.
+        """
         passenger_list = []
 
         if self._is_srt:
@@ -155,7 +190,7 @@ class RailService:
         Returns:
             Tuple of (rail_client, user_info_dict)
         """
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         rail_type_str = rail_type.value if isinstance(rail_type, RailType) else rail_type
 
         if rail_type_str == "SRT":
@@ -214,12 +249,14 @@ class RailService:
         Returns:
             List of normalized train dictionaries
         """
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
-        # Build passenger list from PassengerCount
+        # Build passenger list for SEARCH (성인만 통합 - srtgo 호환)
         if passengers is None:
             passengers = PassengerCount()
-        passenger_list = self._build_passenger_list(passengers)
+        passenger_list = self._build_search_passenger_list(passengers)
+
+        logger.debug(f"Search passengers: {passengers.total}명 (성인으로 통합)")
 
         try:
             if self._is_srt:
@@ -236,6 +273,14 @@ class RailService:
                     ),
                 )
             else:
+                # KTX: train_type을 API 파라미터로 직접 전달 (기존 srtgo 방식)
+                # 여러 train_type이 지정된 경우 첫 번째 것만 사용 (API 제약)
+                ktx_train_type = KTXTrainType.ALL
+                if train_types and len(train_types) > 0:
+                    first_type = train_types[0]
+                    ktx_train_type = TRAIN_TYPE_TO_KTX.get(first_type, KTXTrainType.ALL)
+                    logger.debug(f"KTX search with train_type: {first_type.value} -> {ktx_train_type}")
+
                 trains = await loop.run_in_executor(
                     None,
                     partial(
@@ -245,6 +290,7 @@ class RailService:
                         date=date,
                         time=time,
                         passengers=passenger_list,
+                        train_type=ktx_train_type,
                         include_no_seats=True,
                     ),
                 )
@@ -255,13 +301,7 @@ class RailService:
             # Normalize trains
             normalized_trains = [self._normalize_train(t, i) for i, t in enumerate(trains)]
 
-            # Filter by train types if specified (KTX only)
-            if train_types and not self._is_srt:
-                train_type_values = [t.value for t in train_types]
-                normalized_trains = [
-                    t for t in normalized_trains
-                    if t["train_name"] in train_type_values
-                ]
+            # Note: train_type 필터링은 이제 API에서 직접 처리되므로 후처리 불필요
 
             return normalized_trains
 
@@ -343,12 +383,14 @@ class RailService:
             )
 
         train = self._last_trains[train_index]
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
-        # Build passenger list from PassengerCount
+        # Build passenger list for RESERVE (실제 구성 전달 - 할인 적용)
         if passengers is None:
             passengers = PassengerCount()
-        passenger_list = self._build_passenger_list(passengers)
+        passenger_list = self._build_reserve_passenger_list(passengers)
+
+        logger.debug(f"Reserve passengers: {passengers}")
 
         try:
             if self._is_srt:
@@ -428,7 +470,7 @@ class RailService:
             )
 
         train = self._last_trains[train_index]
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         # Check if standby is available
         if self._is_srt:
@@ -444,10 +486,12 @@ class RailService:
                     "해당 열차는 예약대기가 불가능합니다.",
                 )
 
-        # Build passenger list from PassengerCount
+        # Build passenger list for RESERVE STANDBY (실제 구성 전달 - 할인 적용)
         if passengers is None:
             passengers = PassengerCount()
-        passenger_list = self._build_passenger_list(passengers)
+        passenger_list = self._build_reserve_passenger_list(passengers)
+
+        logger.debug(f"Reserve standby passengers: {passengers}")
 
         try:
             if self._is_srt:
@@ -512,8 +556,8 @@ class RailService:
                     {
                         "car": ticket.car,
                         "seat": ticket.seat,
-                        "seat_type": ticket.seat_type_str,
-                        "passenger_type": ticket.passenger_type_str,
+                        "seat_type": str(getattr(ticket, "seat_type", "")),
+                        "passenger_type": str(getattr(ticket, "passenger_type", "")),
                         "price": int(ticket.price) if ticket.price else 0,
                     }
                 )
@@ -568,7 +612,7 @@ class RailService:
 
     async def get_reservations(self) -> List[Dict[str, Any]]:
         """Get user's current reservations."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         try:
             if self._is_srt:
@@ -587,7 +631,7 @@ class RailService:
 
     async def cancel_reservation(self, reservation_number: str) -> bool:
         """Cancel a reservation."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         try:
             if self._is_srt:
@@ -628,7 +672,7 @@ class RailService:
         Returns:
             Payment result dictionary with success status and details
         """
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         # First, get the reservation object
         try:

@@ -1,6 +1,6 @@
 """Session management for temporary credential storage."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, Set, TYPE_CHECKING
 from uuid import uuid4
 import asyncio
@@ -39,7 +39,7 @@ class Session:
     @property
     def is_expired(self) -> bool:
         """Check if session has expired."""
-        return datetime.utcnow() > self.expires_at
+        return datetime.now(timezone.utc) > self.expires_at
 
 
 class SessionManager:
@@ -96,7 +96,7 @@ class SessionManager:
     async def _cleanup_expired(self) -> None:
         """Remove all expired sessions."""
         async with self._lock:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             expired = [
                 sid for sid, session in self._sessions.items() if session.is_expired
             ]
@@ -154,7 +154,7 @@ class SessionManager:
         encrypted = self._credential_handler.encrypt(user_id, password)
 
         session_id = str(uuid4())
-        expires_at = datetime.utcnow() + timedelta(minutes=self.ttl_minutes)
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=self.ttl_minutes)
 
         session = Session(
             session_id=session_id,
@@ -229,7 +229,7 @@ class SessionManager:
         """Extend session TTL on activity."""
         session = self._sessions.get(session_id)
         if session and not session.is_expired:
-            session.expires_at = datetime.utcnow() + timedelta(minutes=self.ttl_minutes)
+            session.expires_at = datetime.now(timezone.utc) + timedelta(minutes=self.ttl_minutes)
             return True
         return False
 
@@ -240,7 +240,7 @@ class SessionManager:
     @property
     def active_session_count(self) -> int:
         """Get count of active (non-expired) sessions."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         return sum(1 for s in self._sessions.values() if s.expires_at > now)
 
 

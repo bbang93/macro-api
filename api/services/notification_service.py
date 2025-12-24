@@ -87,7 +87,8 @@ class TelegramNotifier:
             logger.error("Telegram notification timed out")
             return False
         except httpx.HTTPStatusError as e:
-            logger.error(f"Telegram HTTP error: {e.response.status_code}")
+            error_detail = e.response.text
+            logger.error(f"Telegram HTTP error {e.response.status_code}: {error_detail}")
             return False
         except Exception as e:
             logger.error(f"Telegram notification failed: {e}")

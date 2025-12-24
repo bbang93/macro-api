@@ -230,10 +230,13 @@ class JobService:
 
         rail_service = RailService.create(session.rail_type, session.rail_client)
 
+        # Get current event loop for thread-safe callback
+        loop = asyncio.get_running_loop()
+
         # Set NetFunnel callback to broadcast waiting status
         def netfunnel_callback(status: str, nwait: int):
-            """Callback for NetFunnel waiting status."""
-            asyncio.create_task(
+            """Callback for NetFunnel waiting status (called from sync context)."""
+            asyncio.run_coroutine_threadsafe(
                 connection_manager.broadcast_to_session(
                     session.session_id,
                     EventTypes.NETFUNNEL_WAITING if status == "waiting" else EventTypes.NETFUNNEL_PASSED,
@@ -243,7 +246,8 @@ class JobService:
                         "wait_count": nwait,
                         "message": f"NetFunnel 대기중... ({nwait}명)" if status == "waiting" else "NetFunnel 통과"
                     },
-                )
+                ),
+                loop
             )
 
         rail_service.set_netfunnel_callback(netfunnel_callback)
@@ -337,28 +341,24 @@ class JobService:
 
                         train = trains[idx]
 
-                        # Check if seat is available based on preference
-                        can_reserve = False
-                        can_standby = False
+                        # Check if seat is available (기존 srtgo 방식)
+                        # _is_seat_available() 로직과 동일하게 구현
+                        has_any_seat = train["general_seat_available"] or train["special_seat_available"]
 
-                        if job.seat_type in (SeatType.GENERAL_FIRST, SeatType.GENERAL_ONLY):
-                            can_reserve = train["general_seat_available"]
-                        if not can_reserve and job.seat_type in (SeatType.SPECIAL_FIRST, SeatType.SPECIAL_ONLY):
-                            can_reserve = train["special_seat_available"]
-                        if not can_reserve and job.seat_type == SeatType.GENERAL_FIRST:
-                            can_reserve = train["special_seat_available"]
-                        if not can_reserve and job.seat_type == SeatType.SPECIAL_FIRST:
-                            can_reserve = train["general_seat_available"]
+                        if not has_any_seat:
+                            # 좌석 없으면 대기 가능 여부 체크 (use_standby가 True인 경우만)
+                            if not job.use_standby or not train["standby_available"]:
+                                continue
+                        else:
+                            # 좌석이 있으면 seat_type에 따라 체크
+                            if job.seat_type == SeatType.GENERAL_ONLY and not train["general_seat_available"]:
+                                continue
+                            if job.seat_type == SeatType.SPECIAL_ONLY and not train["special_seat_available"]:
+                                continue
+                            # GENERAL_FIRST, SPECIAL_FIRST는 아무 좌석이나 있으면 OK
 
-                        # Check for standby availability if no regular seats and standby is enabled
-                        if not can_reserve and job.use_standby:
-                            can_standby = train["standby_available"]
-
-                        if not can_reserve and not can_standby:
-                            continue
-
-                        # Determine reservation type
-                        is_standby = not can_reserve and can_standby
+                        # 예약 가능한 열차 발견
+                        is_standby = not has_any_seat and train["standby_available"]
                         seat_type_str = "standby" if is_standby else (
                             "general" if train["general_seat_available"] else "special"
                         )
@@ -380,22 +380,15 @@ class JobService:
 
                         try:
                             # Attempt reservation (with auto-relogin on session expiry)
+                            # 기존 srtgo 방식: 항상 reserve() 호출
+                            # SRT/KTX 라이브러리가 내부적으로 좌석 없으면 자동으로 대기 예약 처리
                             try:
-                                if is_standby:
-                                    # Attempt standby reservation
-                                    reservation = await rail_service.reserve_standby(
-                                        train_index=idx,
-                                        passengers=job.passengers,
-                                        seat_type=job.seat_type,
-                                    )
-                                else:
-                                    # Regular reservation
-                                    reservation = await rail_service.reserve(
-                                        train_index=idx,
-                                        passengers=job.passengers,
-                                        seat_type=job.seat_type,
-                                        prefer_window=job.prefer_window,
-                                    )
+                                reservation = await rail_service.reserve(
+                                    train_index=idx,
+                                    passengers=job.passengers,
+                                    seat_type=job.seat_type,
+                                    prefer_window=job.prefer_window,
+                                )
                             except (SRTLoginError, NeedToLoginError) as e:
                                 # Session expired during reservation, attempt auto-relogin
                                 logger.warning(f"Session expired during reservation for job {job.id[:8]}...: {e}")
@@ -406,19 +399,12 @@ class JobService:
                                     rail_service.set_netfunnel_callback(netfunnel_callback)
 
                                     # Retry reservation
-                                    if is_standby:
-                                        reservation = await rail_service.reserve_standby(
-                                            train_index=idx,
-                                            passengers=job.passengers,
-                                            seat_type=job.seat_type,
-                                        )
-                                    else:
-                                        reservation = await rail_service.reserve(
-                                            train_index=idx,
-                                            passengers=job.passengers,
-                                            seat_type=job.seat_type,
-                                            prefer_window=job.prefer_window,
-                                        )
+                                    reservation = await rail_service.reserve(
+                                        train_index=idx,
+                                        passengers=job.passengers,
+                                        seat_type=job.seat_type,
+                                        prefer_window=job.prefer_window,
+                                    )
                                 else:
                                     # Relogin failed
                                     raise RailServiceError(
@@ -430,6 +416,9 @@ class JobService:
                             job.status = JobStatus.SUCCESS
                             job.completed_at = datetime.utcnow()
                             job.result = reservation
+
+                            # 실제 대기 예약 여부는 reservation 결과에서 확인
+                            actual_is_standby = reservation.get("is_waiting", False)
 
                             await connection_manager.broadcast_to_session(
                                 session.session_id,
@@ -447,13 +436,13 @@ class JobService:
                                     "total_attempts": job.attempt_count,
                                     "elapsed_seconds": (job.completed_at - job.started_at).total_seconds(),
                                     "reservation": reservation,
-                                    "is_standby": is_standby,
+                                    "is_standby": actual_is_standby,
                                 },
                             )
 
                             logger.info(
                                 f"Job {job.id[:8]}... succeeded after {job.attempt_count} attempts"
-                                f" ({'standby' if is_standby else 'regular'})"
+                                f" ({'standby' if actual_is_standby else 'regular'})"
                             )
 
                             # Send Telegram notification
@@ -461,7 +450,7 @@ class JobService:
                                 notifier = _get_session_notifier(session.session_id)
                                 if notifier.enabled:
                                     await notifier.send_reservation_success(
-                                        reservation, is_standby=is_standby
+                                        reservation, is_standby=actual_is_standby
                                     )
                             except Exception as notify_err:
                                 logger.warning(f"Failed to send Telegram notification: {notify_err}")
@@ -478,18 +467,18 @@ class JobService:
                                     "train_index": idx,
                                     "error_code": e.code,
                                     "error_message": e.message,
-                                    "retryable": e.code in ("RESERVE_SOLD_OUT", "STANDBY_NOT_AVAILABLE"),
+                                    "retryable": True,  # Most errors are retryable
                                     "is_standby": is_standby,
                                 },
                             )
 
-                            if e.code not in ("RESERVE_SOLD_OUT", "STANDBY_NOT_AVAILABLE"):
-                                # Non-retryable error
-                                raise
+                            # Log but continue - will retry on next loop
+                            logger.warning(f"Reservation failed for train {idx}, will retry: {e.message}")
 
                 except RailServiceError as e:
-                    if e.code not in ("RESERVE_SOLD_OUT", "TRAIN_SEARCH_NO_RESULTS"):
-                        # Fatal error
+                    # Only stop for truly fatal errors (session/auth issues handled elsewhere)
+                    if e.code in ("SESSION_EXPIRED", "AUTH_FAILED", "INVALID_CREDENTIALS"):
+                        # Fatal error - cannot continue
                         job.status = JobStatus.FAILED
                         job.completed_at = datetime.utcnow()
                         job.error = e.message
@@ -506,7 +495,7 @@ class JobService:
                             },
                         )
 
-                        logger.error(f"Job {job.id[:8]}... failed: {e.message}")
+                        logger.error(f"Job {job.id[:8]}... failed with fatal error: {e.message}")
 
                         # Send Telegram notification for failure
                         try:
@@ -522,6 +511,9 @@ class JobService:
                             logger.warning(f"Failed to send Telegram notification: {notify_err}")
 
                         return
+
+                    # All other errors: log and continue retrying
+                    logger.warning(f"Job {job.id[:8]}... attempt #{job.attempt_count} error (will retry): {e.message}")
 
                 # Wait before next attempt (gamma distribution: avg 1.25s)
                 wait_time = max(0.25, random.gammavariate(4, 0.25))

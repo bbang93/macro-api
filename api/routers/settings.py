@@ -34,7 +34,7 @@ async def configure_telegram(
 
     Set up Telegram bot token and chat ID for receiving notifications.
     """
-    session = session_manager.get(x_session_id)
+    session = session_manager.get_session(x_session_id)
     if not session:
         raise HTTPException(status_code=401, detail="Invalid session")
 
@@ -52,7 +52,7 @@ async def get_telegram_settings(
     x_session_id: str = Header(...),
 ):
     """Get current Telegram notification settings."""
-    session = session_manager.get(x_session_id)
+    session = session_manager.get_session(x_session_id)
     if not session:
         raise HTTPException(status_code=401, detail="Invalid session")
 
@@ -74,7 +74,7 @@ async def disable_telegram(
     x_session_id: str = Header(...),
 ):
     """Disable Telegram notifications."""
-    session = session_manager.get(x_session_id)
+    session = session_manager.get_session(x_session_id)
     if not session:
         raise HTTPException(status_code=401, detail="Invalid session")
 
@@ -93,7 +93,7 @@ async def test_telegram(
 
     Use this to verify Telegram configuration is working correctly.
     """
-    session = session_manager.get(x_session_id)
+    session = session_manager.get_session(x_session_id)
     if not session:
         raise HTTPException(status_code=401, detail="Invalid session")
 
