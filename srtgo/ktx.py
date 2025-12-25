@@ -27,6 +27,9 @@ from functools import reduce
 EMAIL_REGEX = re.compile(r"[^@]+@[^@]+\.[^@]+")
 PHONE_NUMBER_REGEX = re.compile(r"(\d{3})-(\d{3,4})-(\d{4})")
 
+# Korean proxy for overseas access (Oracle Cloud Seoul)
+KOREAN_PROXY = "socks5://158.179.170.233:1080"
+
 USER_AGENT = "Dalvik/2.1.0 (Linux; U; Android 14; SM-S912N Build/UP1A.231005.007)"
 
 DEFAULT_HEADERS = {
@@ -518,9 +521,10 @@ class Korail:
 
     def __init__(self, korail_id, korail_pw, auto_login=True, verbose=False):
         if HAS_CURL_CFFI:
-            self._session = curl_cffi.Session(impersonate="chrome131_android")
+            self._session = curl_cffi.Session(impersonate="chrome131_android", proxy=KOREAN_PROXY)
         else:
             self._session = requests.session()
+            self._session.proxies = {"http": KOREAN_PROXY, "https": KOREAN_PROXY}
         self._session.headers.update(DEFAULT_HEADERS)
         self._device = "AD"
         self._version = "240531001"
