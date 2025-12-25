@@ -24,8 +24,8 @@ USER_AGENT = (
     "(KHTML, like Gecko) Version/4.0 Chrome/136.0.7103.125 Mobile Safari/537.36SRT-APP-Android V.2.0.38"
 )
 
-# Request timeout (seconds) - increase for overseas servers
-REQUEST_TIMEOUT = 90
+# Request timeout (seconds)
+REQUEST_TIMEOUT = 10
 
 DEFAULT_HEADERS: Dict[str, str] = {
     "User-Agent": USER_AGENT,
