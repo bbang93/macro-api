@@ -25,7 +25,7 @@ USER_AGENT = (
 )
 
 # Request timeout (seconds) - increase for overseas servers
-REQUEST_TIMEOUT = 60
+REQUEST_TIMEOUT = 90
 
 DEFAULT_HEADERS: Dict[str, str] = {
     "User-Agent": USER_AGENT,
