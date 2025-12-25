@@ -27,6 +27,9 @@ USER_AGENT = (
 # Request timeout (seconds)
 REQUEST_TIMEOUT = 10
 
+# Korean proxy for NetFunnel (Oracle Cloud Seoul)
+KOREAN_PROXY = "socks5://158.179.170.233:1080"
+
 DEFAULT_HEADERS: Dict[str, str] = {
     "User-Agent": USER_AGENT,
     "Accept": "application/json",
@@ -533,11 +536,13 @@ class NetFunnelHelper:
         "Accept-Language": "en-US,en;q=0.9,ko-KR;q=0.8,ko;q=0.7",
     }
 
-    def __init__(self, debug=False, on_wait_callback=None):
+    def __init__(self, debug=False, on_wait_callback=None, proxy=None):
         if HAS_CURL_CFFI:
-            self._session = curl_cffi.Session(impersonate="chrome")
+            self._session = curl_cffi.Session(impersonate="chrome", proxy=proxy)
         else:
             self._session = requests.session()
+            if proxy:
+                self._session.proxies = {"http": proxy, "https": proxy}
         self._session.headers.update(self.DEFAULT_HEADERS)
         self._cached_key = None
         self._last_fetch_time = 0
@@ -676,7 +681,7 @@ class SRT:
         else:
             self._session = requests.session()
         self._session.headers.update(DEFAULT_HEADERS)
-        self._netfunnel = NetFunnelHelper(debug=verbose, on_wait_callback=on_netfunnel_wait_callback)
+        self._netfunnel = NetFunnelHelper(debug=verbose, on_wait_callback=on_netfunnel_wait_callback, proxy=KOREAN_PROXY)
         self.srt_id = srt_id
         self.srt_pw = srt_pw
         self.verbose = verbose
