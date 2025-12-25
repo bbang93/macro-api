@@ -28,7 +28,9 @@ USER_AGENT = (
 REQUEST_TIMEOUT = 10
 
 # Korean proxy for NetFunnel (Oracle Cloud Seoul)
-KOREAN_PROXY = "socks5://158.179.170.233:1080"
+# Set to None for local testing in Korea
+import os
+KOREAN_PROXY = os.environ.get("KOREAN_PROXY", None)  # "socks5://158.179.170.233:1080"
 
 DEFAULT_HEADERS: Dict[str, str] = {
     "User-Agent": USER_AGENT,
@@ -332,6 +334,7 @@ class SRTReservation:
         self.payment_date = pay.get("iseLmtDt")
         self.payment_time = pay.get("iseLmtTm")
         self.paid = pay.get("stlFlg") == "Y"
+        self.is_paid = self.paid  # Alias for consistency
         self.is_running = "tkSpecNum" not in train
         self.is_waiting = not (self.paid or self.payment_date or self.payment_time)
 

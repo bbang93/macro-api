@@ -28,7 +28,9 @@ EMAIL_REGEX = re.compile(r"[^@]+@[^@]+\.[^@]+")
 PHONE_NUMBER_REGEX = re.compile(r"(\d{3})-(\d{3,4})-(\d{4})")
 
 # Korean proxy for overseas access (Oracle Cloud Seoul)
-KOREAN_PROXY = "socks5://158.179.170.233:1080"
+# Set to None for local testing in Korea
+import os
+KOREAN_PROXY = os.environ.get("KOREAN_PROXY", None)  # "socks5://158.179.170.233:1080"
 
 USER_AGENT = "Dalvik/2.1.0 (Linux; U; Android 14; SM-S912N Build/UP1A.231005.007)"
 

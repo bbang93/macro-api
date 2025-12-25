@@ -554,13 +554,19 @@ class RailService:
             for ticket in reservation.tickets:
                 tickets.append(
                     {
-                        "car": ticket.car,
-                        "seat": ticket.seat,
+                        "car": str(ticket.car) if ticket.car else "",
+                        "seat": str(ticket.seat) if ticket.seat else "",
                         "seat_type": str(getattr(ticket, "seat_type", "")),
                         "passenger_type": str(getattr(ticket, "passenger_type", "")),
                         "price": int(ticket.price) if ticket.price else 0,
                     }
                 )
+
+            # Build payment_deadline from payment_date + payment_time
+            payment_deadline = None
+            if hasattr(reservation, "payment_date") and hasattr(reservation, "payment_time"):
+                if reservation.payment_date and reservation.payment_time:
+                    payment_deadline = f"{reservation.payment_date} {reservation.payment_time}"
 
             return {
                 "reservation_number": reservation.reservation_number,
@@ -573,9 +579,9 @@ class RailService:
                 "arr_time": reservation.arr_time,
                 "seat_count": reservation.seat_count,
                 "total_cost": reservation.total_cost,
-                "is_paid": reservation.is_paid,
+                "is_paid": getattr(reservation, "is_paid", getattr(reservation, "paid", False)),
                 "is_waiting": getattr(reservation, "is_waiting", False),
-                "payment_deadline": getattr(reservation, "payment_deadline", None),
+                "payment_deadline": payment_deadline,
                 "tickets": tickets,
             }
         else:
@@ -593,20 +599,30 @@ class RailService:
                         }
                     )
 
+            # Build payment_deadline from buy_limit_date + buy_limit_time
+            payment_deadline = None
+            buy_limit_date = getattr(reservation, "buy_limit_date", None)
+            buy_limit_time = getattr(reservation, "buy_limit_time", None)
+            if buy_limit_date and buy_limit_time and buy_limit_date != "00000000":
+                payment_deadline = f"{buy_limit_date} {buy_limit_time}"
+
+            # KTX Reservation doesn't have is_paid - if not waiting and has deadline, it's unpaid
+            is_waiting = getattr(reservation, "is_waiting", False)
+
             return {
                 "reservation_number": reservation.rsv_id,
-                "train_name": getattr(reservation, "train_name", ""),
+                "train_name": getattr(reservation, "train_type_name", getattr(reservation, "train_name", "")),
                 "train_number": getattr(reservation, "train_no", ""),
                 "dep_station": getattr(reservation, "dep_name", ""),
                 "arr_station": getattr(reservation, "arr_name", ""),
                 "dep_date": getattr(reservation, "dep_date", ""),
                 "dep_time": getattr(reservation, "dep_time", ""),
                 "arr_time": getattr(reservation, "arr_time", ""),
-                "seat_count": getattr(reservation, "seat_count", 1),
+                "seat_count": getattr(reservation, "seat_no_count", getattr(reservation, "seat_count", 1)),
                 "total_cost": int(getattr(reservation, "price", 0)),
-                "is_paid": getattr(reservation, "is_paid", False),
-                "is_waiting": getattr(reservation, "is_waiting", False),
-                "payment_deadline": getattr(reservation, "payment_deadline", None),
+                "is_paid": False,  # KTX doesn't track payment status in Reservation object
+                "is_waiting": is_waiting,
+                "payment_deadline": payment_deadline,
                 "tickets": tickets,
             }
 
@@ -700,7 +716,7 @@ class RailService:
                 )
 
             # Check if already paid
-            is_paid = reservation.is_paid if self._is_srt else getattr(reservation, "is_paid", False)
+            is_paid = getattr(reservation, "is_paid", getattr(reservation, "paid", False))
             if is_paid:
                 raise RailServiceError(
                     "PAYMENT_ALREADY_PAID",
