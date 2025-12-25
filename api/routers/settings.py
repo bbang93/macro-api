@@ -121,3 +121,42 @@ async def test_telegram(
             success=False,
             message="알림 전송에 실패했습니다. 토큰과 채팅 ID를 확인해주세요.",
         )
+
+
+@router.post("/telegram/login", response_model=NotificationTestResponse)
+async def send_login_notification(
+    x_session_id: str = Header(...),
+):
+    """
+    Send a login notification.
+
+    Sends a notification when user logs in.
+    """
+    session = session_manager.get_session(x_session_id)
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid session")
+
+    notifier = get_notifier(x_session_id)
+
+    if not notifier.enabled:
+        return NotificationTestResponse(
+            success=False,
+            message="텔레그램 알림이 설정되지 않았습니다.",
+        )
+
+    success = await notifier.send_login_notification(
+        rail_type=session.rail_type.value,
+        user_name=session.user_name or session.user_id,
+        membership_number=session.membership_number,
+    )
+
+    if success:
+        return NotificationTestResponse(
+            success=True,
+            message="로그인 알림이 전송되었습니다.",
+        )
+    else:
+        return NotificationTestResponse(
+            success=False,
+            message="알림 전송에 실패했습니다.",
+        )

@@ -233,6 +233,34 @@ class TelegramNotifier:
 """
         return await self._send_message(message.strip())
 
+    async def send_login_notification(
+        self,
+        rail_type: str,
+        user_name: str,
+        membership_number: Optional[str] = None,
+    ) -> bool:
+        """
+        Send login notification.
+
+        Args:
+            rail_type: Type of rail service (SRT/korail)
+            user_name: User name or ID
+            membership_number: Membership number
+
+        Returns:
+            True if notification was sent successfully
+        """
+        rail_label = "SRT" if rail_type.lower() == "srt" else "코레일"
+        message = f"""
+<b>🚄 로그인 알림</b>
+
+<b>서비스:</b> {rail_label}
+<b>사용자:</b> {user_name}
+<b>회원번호:</b> {membership_number or '-'}
+<b>시간:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+"""
+        return await self._send_message(message.strip())
+
     @staticmethod
     def _format_datetime(date_str: Optional[str], time_str: Optional[str]) -> str:
         """Format date and time strings for display."""
