@@ -680,9 +680,11 @@ class SRT:
         on_netfunnel_wait_callback=None
     ) -> None:
         if HAS_CURL_CFFI:
-            self._session = curl_cffi.Session(impersonate="chrome")
+            self._session = curl_cffi.Session(impersonate="chrome", proxy=KOREAN_PROXY)
         else:
             self._session = requests.session()
+            if KOREAN_PROXY:
+                self._session.proxies = {"http": KOREAN_PROXY, "https": KOREAN_PROXY}
         self._session.headers.update(DEFAULT_HEADERS)
         self._netfunnel = NetFunnelHelper(debug=verbose, on_wait_callback=on_netfunnel_wait_callback, proxy=KOREAN_PROXY)
         self.srt_id = srt_id
