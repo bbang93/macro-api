@@ -132,11 +132,16 @@ async def send_login_notification(
 
     Sends a notification when user logs in.
     """
+    import logging
+    logger = logging.getLogger(__name__)
+
     session = session_manager.get_session(x_session_id)
     if not session:
         raise HTTPException(status_code=401, detail="Invalid session")
 
     notifier = get_notifier(x_session_id)
+
+    logger.info(f"[로그인알림] session_id={x_session_id[:8]}..., notifier.enabled={notifier.enabled}, bot_token={notifier.bot_token[:10] if notifier.bot_token else None}..., chat_id={notifier.chat_id}")
 
     if not notifier.enabled:
         return NotificationTestResponse(
@@ -149,6 +154,8 @@ async def send_login_notification(
         user_name=session.user_info.get('name') or session.user_info.get('membership_number', 'Unknown'),
         membership_number=session.user_info.get('membership_number'),
     )
+
+    logger.info(f"[로그인알림] send_login_notification 결과: {success}")
 
     if success:
         return NotificationTestResponse(

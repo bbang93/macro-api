@@ -71,8 +71,10 @@ class TelegramNotifier:
         }
 
         try:
+            logger.info(f"[텔레그램] 메시지 전송 시도: chat_id={self.chat_id}, text={text[:50]}...")
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.post(url, json=payload)
+                logger.info(f"[텔레그램] 응답 코드: {response.status_code}")
                 response.raise_for_status()
 
                 result = response.json()
@@ -91,7 +93,7 @@ class TelegramNotifier:
             logger.error(f"Telegram HTTP error {e.response.status_code}: {error_detail}")
             return False
         except Exception as e:
-            logger.error(f"Telegram notification failed: {e}")
+            logger.error(f"Telegram notification failed: {e}", exc_info=True)
             return False
 
     async def send_reservation_success(
