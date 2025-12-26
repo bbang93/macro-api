@@ -145,9 +145,9 @@ async def send_login_notification(
         )
 
     success = await notifier.send_login_notification(
-        rail_type=session.rail_type.value,
-        user_name=session.user_name or session.user_id,
-        membership_number=session.membership_number,
+        rail_type=session.rail_type,
+        user_name=session.user_info.get('name') or session.user_info.get('membership_number', 'Unknown'),
+        membership_number=session.user_info.get('membership_number'),
     )
 
     if success:
